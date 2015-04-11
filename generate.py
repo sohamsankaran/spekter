@@ -164,11 +164,11 @@ def main():
 			proc = Popen(["aplay", filename + str(n)])
 			n = (n + 1) % 2
 
-    # each channel is defined by infinite functions which are added to produce a sample.
-	#channels = ((sine_wave(args.frequency*(i+1), args.rate, args.amplitude),) for i in range(args.channels))
+    #each channel is defined by infinite functions which are added to produce a sample.
+#	channels = ((sine_wave(args.frequency*(i+1), args.rate, args.amplitude),) for i in range(args.channels))
 
     # convert the channel functions into waveforms
-	#samples = compute_samples(channels, args.rate * args.time)
+#	samples = compute_samples(channels, args.rate * 30)
 
     # write the samples to a file
 #	if args.filename == '-':
