@@ -111,7 +111,7 @@ def main():
 	parser.add_argument('-c', '--channels', help="Number of channels to produce", default=2, type=int)
 	parser.add_argument('-b', '--bits', help="Number of bits in each sample", choices=(16,), default=16, type=int)
 	parser.add_argument('-r', '--rate', help="Sample rate in Hz", default=44100, type=int)
-	parser.add_argument('-t', '--time', help="Duration of the wave in seconds.", default = 0.4, type=float)	
+	parser.add_argument('-t', '--time', help="Duration of the wave in seconds.", default = 0.05, type=float)	
 	parser.add_argument('-a', '--amplitude', help="Amplitude of the wave on a scale of 0.0-1.0", default=0.5, type=float)
 	parser.add_argument('-f', '--frequency', help="Seed for frequencies of the wave in Hz", default=2000.0, type=float)
 	parser.add_argument('-s', '--step', help="Step for generating next frequencies in Hz", default=97.0, type=float)	
@@ -128,10 +128,11 @@ def main():
 
 	binary = getAndParseInput()
 
+	startStopTime = 0.06
 	#generate start signal
 	channels = ((sine_wave(615, args.rate, args.amplitude),) for i in range(1))
 	#length of start signal -> 1
-	samples = compute_samples(channels, args.rate *0.5)
+	samples = compute_samples(channels, args.rate *startStopTime)
 	#write and play
 	write_wavefile("start", samples, args.rate * args.time, args.channels, args.bits / 8, args.rate)
 	proc = Popen(["aplay", "start0"])
@@ -178,7 +179,7 @@ def main():
 			
 			if 'proc' in locals():
 				proc.wait()
-				time.sleep(0.5)
+				time.sleep(0.08)
 			
 			proc = Popen(["aplay", filename + str(n)])
 			n = (n + 1) % 2
@@ -186,7 +187,7 @@ def main():
 	#generate stop signal
 	channels = ((sine_wave(615, args.rate, args.amplitude),) for i in range(1))
 	#length of stop signal -> 1
-	samples = compute_samples(channels, args.rate * 0.5)
+	samples = compute_samples(channels, args.rate * startStopTime)
 	#write and play
 	write_wavefile("stop", samples, args.rate * args.time, args.channels, args.bits / 8, args.rate)
 	if 'proc' in locals():
