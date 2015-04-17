@@ -12,8 +12,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from operator import add
 
-bufferSize=2**11
-sampleRate=44100
+#Dropping the buffer size increases the time-resolution. 
+#Time resolution = bufferSize / sampleRate (current is about 0.006 sec in theory (!!))
+#With that resolution, do we even need synchro?
+bufferSize=2**8
+sampleRate=44200
 
 #microphone Handle
 p=pyaudio.PyAudio()
@@ -22,16 +25,16 @@ chunks=[]
 #Holds the frequencies that carry data
 freqs = [2000, 5200]
 #Holds the indicators for frequencies within the frequencies from fft! 
-#see fourier()
+#see fourier() -- those are the indeces of frequencies
 freqIndic = []
-#Holds data for stats-graphs
+#Holds data for stats-graphs -- at the time we don't plot anything
 statsY = []
 statsGraphY2k = []
 statsGraphY5k = []
 #See the recordData for details
 recordCount = 0
 data = []
-#Has to be known by the generator
+#Has to be known by the generator. Code for the start/end!
 startFreq = 1260
 endFreq = 1260
 #figure with subplots
@@ -44,17 +47,21 @@ plt.ylim(-5,20)
 plt.ion()
 plt.show()
 		
+#Stream the recorded data. Put them in buffer that fourier() then consumes
 def stream():
 	global chunks, inStream, bufferSize
 	while True:
 		chunks.append(inStream.read(bufferSize))
 
+#Init. the microphone and start recording
 def record():
 	global inStream, bufferSize, p
 	inStream=p.open(format=pyaudio.paInt16,channels=1,\
 		rate=sampleRate, input=True, frames_per_buffer=bufferSize)
 	threading.Thread(target=stream).start()
 
+#For noise cancellation I had three attempts, each building on the former. Leave them in
+#for project's sake. I will describe those in the report as well.
 	#take 1. Use global average
 def cancelNoiseGlobalAvg(data):
 	average = 0
@@ -72,27 +79,29 @@ def cancelNoiseLocalAvg(data):
 		if i % frequencyHops == 0:	
 			average[len(average)-1] = average[len(average)-1] / frequencyHops
 			average.append(0)		
-		# Add the them values together	
+		# Add the values together	
 		average[len(average)-1] = average[len(average)-1] + data[i];
 
 	average[:] = average[1:]
 	for i in range(len(data)):
 		data[i] = data[i] - average[int(i/frequencyHops)]
 	
-	#take 3. Use local avg but smoothed
+	#take 3. Use local avg but smoothed. This is what we use at the end
 def cancelNoiseSmoothLocalAvg(data):
 	margin = 10
 	actualElems = 0;
 	average = [0]*len(data)
 	for i in range(len(data)):
 		actualElems = 0
+		#Just as before but take average of elems on both sides of the current one
 		for j in range(-margin, margin):
 			if i+j >= 0 and i+j < len(data):
 				average[i] = average[i] + data[i+j]
 				actualElems += 1
 		if actualElems != 0:
 			average[i] = average[i] / actualElems
-
+	
+	#Annihilate the peaks that are less than peakTshld average. Takes care of most noise
 	peakTshld = 1.1
 	for i in range(len(data)):
 		if data[i] - average[i]*peakTshld < 0:
@@ -100,39 +109,52 @@ def cancelNoiseSmoothLocalAvg(data):
 		else:
 			data[i] = data[i] - average[i]
 
+#Record meaningful data that will later be parsed. Begin recording when we have 
+#startFreq high enough for 5 consecutive readings. We stop recording when we have
+#Another 5 consecutive readings. Then we analyze what we recorded.
 def recordData(ffty):
 	global recordCount, data
 
 	if recordCount == 5:
+		#Because spam is fun!
 		print "recording!"	
 
+	#Not recording, waiting for start signal
 	if recordCount < 5:
 		data.append(ffty)
+		#Not to overflow the buffer / trash the memory
 		if len(data) > 10:
 			data.pop(0)
 		
 		#We want a continuous start signal to start recording!
-		if data[len(data)-1][freqIndic[2]] > 8.0:
+		#The 10 is purely empirical. I believe I could even make it 20
+		if data[len(data)-1][freqIndic[2]] > 10.0:
 			recordCount += 1
 		else:
+			#If non-continuous, reset counter
 			recordCount = 0
+	#We are recording, waiting for the stop signal
 	elif recordCount < 9:
 		data.append(ffty)
 		
 		#Check for stop signal
-		if data[len(data)-1][freqIndic[3]] > 8.0:
+		if data[len(data)-1][freqIndic[3]] > 10.0:
 			recordCount += 1
 		else:
 			recordCount = 5
+	#Recording stopped, we have the data, now we want to retrieve bits etc.
 	elif recordCount == 9:
 		print "stopped recording!"
 		recordCount = 0
 		analyze()
 			
+#Retrieves bits from the recorded chunks of sound. Then calls convertBinaryToAscii
+#To retrieve the actual data
 def analyze():
 	global data, chunks
 	
 	print "Started input analysis! Suppressing recorded data"
+	#See smoothData for details, but this smooths the signal in time for all freqs
 	data = smoothData(data)
 	output = ""
 	while data:
@@ -140,23 +162,26 @@ def analyze():
 		currentChunk = data.pop(0)
 		if sum(currentChunk[freqIndic[0]-1:freqIndic[0]+2]) > 15.0:
 			output += "0"
-			print "0"
-			# So that you do not duplicate the same bit
+			# So that you do not duplicate the same bit, delete the chunks
+			# that are within the same "0" signal! This works because
+			# the signal is reasonably smooth (!!!)
 			while sum(currentChunk[freqIndic[0]-1:freqIndic[0]+2]) > 3.0:
-				print sum(currentChunk[freqIndic[0]-1:freqIndic[0]+2])
 				currentChunk = data.pop(0)
 	
 		elif sum(currentChunk[freqIndic[1]-1:freqIndic[1]+2]) > 15.0:
 			output += "1"
-			print "1"
-			# So that you do not duplicate the same bit
+			# So that you do not duplicate the same bit, delete the chunks
+			# that are within the same "1" signal! This works because
+			# the signal is reasonably smooth (!!!)
 			while sum(currentChunk[freqIndic[1]-1:freqIndic[1]+2]) > 3.0:
-				print sum(currentChunk[freqIndic[0]-1:freqIndic[0]+2]) 
 				currentChunk = data.pop(0)
 	print output
 	convertBinaryToAscii(output)
 
-#Smooth data in time for every frequency
+#Smooth data in time for every frequency. Consider current chunk, one in past and one in future
+# and take average of these as your value for every frequency. This prevents the signal 
+# corresponding to "1" or "0" to have a "gorge" within it that would split it into two
+# "1" or "0" signals!
 def smoothData(data):
 	smoothedGlobal = []
 	for i in range(1,len(data)-1):
@@ -169,29 +194,36 @@ def smoothData(data):
 		smoothedGlobal.append(smoothedLocal)
 	return smoothedGlobal
 
+#Print out the ascii value of retrieved bits
 def convertBinaryToAscii(binary):
 	#Only to clean it before going back to normal operation
 	global chunks
 
 	print "Converting binary to ASCII" 
-
+	#Split into bytes
 	splitList = []
 	for i in range(len(binary)/8):
 		splitList.append(binary[i*8:i*8+8])
-	print splitList	
+	print splitList
+	
+	#Convert bytes into ints
 	integerVals = []
 	for i in range(len(splitList)):
 		integerVals.append(int(splitList[i], 2))
 
 	print integerVals
+	
+	#convert ints into ascii. Notice modulo 128! This is to fail gracefully
+	# If you you decode wrong
 	msg = ""
 	for i in range(len(integerVals)):
-		msg += str(unichr(integerVals[i]))
+		msg += str(unichr(integerVals[i]%128))
 
 	print msg
 	#Clean chunks before going back!
 	chunks[:] = [] 
 
+#For plotting. Don't worry about this too much
 def getStats(fftDataY):
 	global statsY
 	statsY.append(fftDataY)
@@ -199,6 +231,7 @@ def getStats(fftDataY):
 	if(len(statsY)>10):
 		statsY.pop(0)
 
+#don't worry about this. It's for plotting.
 def updateStatsGraph():
 	global statsPlot2k, statsPlot5k, statsY, li2, statsGraphY2k, statsGraphY5k, freqIndic
 	j = 0
@@ -223,11 +256,13 @@ def updateStatsGraph():
 	statsPlot5k.relim()
 	statsPlot5k.autoscale_view(True, True, True)
 
+#Get the indices for all the frequencies we are using (within freq returned by fft)
 def getIndicators(fftFreq):
 	global freqIndic, freqs, startFreq, endFreq
 	
 	resolution = fftFreq[1]-fftFreq[0]	
 
+	#frequencies that carry information
 	for i in range(len(freqs)):
 		for j in range(len(fftFreq)):
 			if np.abs(freqs[i] - fftFreq[j]) < resolution:
@@ -263,7 +298,8 @@ def fourier():
 			fftb = 10*np.log10(np.sqrt(fft.imag**2 + fft.real**2))[:len(data)/2]
 			cancelNoiseSmoothLocalAvg(fftb)
 			#For plotting statistics about significant frequencies
-			getStats(fftb)
+			#getStats(fftb)
+			#updateStatsGraph()
 			if first == 0:
 				#Strong assumption: The frequency-brackets DO NOT CHANGE
 				# true for constant chunks
@@ -278,11 +314,9 @@ def fourier():
 				ax.relim()
 				ax.autoscale_view(True, True, True)	
 				first = 1
-				updateStatsGraph()
 			li.set_ydata(fftb)
-			updateStatsGraph()
 			recordData(fftb)
-			fig.canvas.draw()
+			#fig.canvas.draw()
 		if len(chunks)>20:
 			print "This is slow",len(chunks)
 
