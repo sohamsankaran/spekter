@@ -24,6 +24,10 @@ from operator import add
 	# p -- microphone handle
 	# inStream -- stream from microphone
 	# recordedMsg -- recorded non-decrypted message. In the fft chunks format
+	# recordThsld -- number of chunks of high start/end freq to star/end recording
+	# startEndChunks -- number of consecutive start/end chunks
+	# recording -- boolean value - 1 if recording 0 otherwise
+	# botBound -- in dB, lower bound to detect signal
 	
 class Receiver:	
 	#For clarity
@@ -34,10 +38,14 @@ class Receiver:
 	endFreq = 0
 	recordCount = 0
 	recordedMsg = []
+	recordThsld = 5
+	botBound = 15.0
+	startEndChunks = 0
 	p = pyaudio.PyAudio()
 	inStream = 0
 	chunks = []
 	recording = 0
+	noise = noiseFilter()
 
 	def __init__(self, bufferSize = 2**8, sampleRate = 44200, freqs = [2000, 5200], \
 			startFreq = 1260, endFreq = 1260):
@@ -53,71 +61,128 @@ class Receiver:
 		while True:
 			self.chunks.append(self.inStream.read(self.bufferSize))
 
+	def start(self)
+		startMicrophone()
+		fourier()
+
+	def fourier(self):
+		global chunks, bufferSize, w, li, fig, statsPlot
+		# Lousy code for fast implementation
+		first = 0
+		count = 0
+		while True:
+			if len(self.chunks)>0:
+				data = self.chunks.pop(0)
+				data = np.fromstring(self.recordedMsg, dtype=np.int16)
+				#data = scipy.array(struct.unpack("%dB"%(bufferSize*2),data))
+
+				fft = np.fft.fft(self.recordedMsg)
+				fftr = 10*np.log10(abs(fft.real))[:len(data)/2]
+				ffti = 10*np.log10(abs(fft.imag))[:len(data)/2]
+				fftb = 10*np.log10(np.sqrt(fft.imag**2 + fft.real**2))[:len(data)/2]
+				fftb = noise.cancelNoiseSmoothLocalAvg(fftb)
+				#For plotting statistics about significant frequencies
+				#getStats(fftb)
+				#updateStatsGraph()
+				if first == 0:
+					#Strong assumption: The frequency-brackets DO NOT CHANGE
+					# true for constant chunks
+					freq = np.fft.fftfreq(len(data),1.0/sampleRate)
+					freq = freq[0:len(freq)/2]
+					getIndicators(freq)
+					first = 1
+				recordMsg(fftb)
+			if len(self.chunks)>20:
+				print "This is slow",len(self.chunks)
+
+	#Get the indices for all the frequencies we are using (within freq returned by fft)
+	def getIndicators(fftFreq):
+		
+		resolution = fftFreq[1]-fftFreq[0]	
+
+		#frequencies that carry information
+		for i in range(len(freqs)):
+			for j in range(len(fftFreq)):
+				if np.abs(freqs[i] - fftFreq[j]) < resolution:
+					freqIndic.append(j)
+					break
+		
+		#start freqIndic is one to last
+		for j in range(len(fftFreq)):
+				if np.abs(startFreq - fftFreq[j]) < resolution:
+					freqIndic.append(j)
+					break
+
+		#end freIndic is last
+		for j in range(len(fftFreq)):
+				if np.abs(endFreq - fftFreq[j]) < resolution:
+					freqIndic.append(j)
+					break
+
+
+	def shouldRecord(self, data):
+		#Nor recording, waiting for start signal
+		if recordCount < recordThsld and recording == 0:
+			if data[freqIndic[2]] > botBound:
+				recordCount += 1
+				return False
+			else:
+				recordCount = 0
+				return False
+		#Recording, wait for stop signal
+		elif recordCount < recordThsld and recording == 1:
+			if data[freqIndic[3]] > botBound:
+				recordCount += 1
+				return True
+			else:
+				recordCount = 0
+				return True
+		#Still recording bt you should stop. 
+		elif recording == 1:
+			recording = 0
+			return True
+		#Not recording but we should record
+		elif recording == 0:
+			recording = 1
+			return True
+
 	#Record meaningful data that will later be parsed. Begin recording when we have 
 	#startFreq high enough for 5 consecutive readings. We stop recording when we have
 	#Another 5 consecutive readings. Then we analyze what we recorded.
-	def recordMsg(ffty):
+	def recordMsg(self, ffty):
+		if shouldRecord(ffty):
+			recordedMsg.append(ffty)
+			#we just stopped
+			if recording == 0:
+				print "Stopped recording! Analyze it!"
+				analyze()
 
-		if recordCount == 5:
-			#Because spam is fun!
-			print "recording!"	
-
-		#Not recording, waiting for start signal
-		if recordCount < 5:
-			self.recordedMsg.append(ffty)
-			#Not to overflow the buffer / trash the memory
-			if len(data) > 10:
-				data.pop(0)
-			
-			#We want a continuous start signal to start recording!
-			#The 10 is purely empirical. I believe I could even make it 20
-			if data[len(data)-1][freqIndic[2]] > 10.0:
-				recordCount += 1
-			else:
-				#If non-continuous, reset counter
-				recordCount = 0
-		#We are recording, waiting for the stop signal
-		elif recordCount < 9:
-			data.append(ffty)
-			
-			#Check for stop signal
-			if data[len(data)-1][freqIndic[3]] > 10.0:
-				recordCount += 1
-			else:
-				recordCount = 5
-		#Recording stopped, we have the data, now we want to retrieve bits etc.
-		elif recordCount == 9:
-			print "stopped recording!"
-			recordCount = 0
-			analyze()
-				
 	#Retrieves bits from the recorded chunks of sound. Then calls convertBinaryToAscii
 	#To retrieve the actual data
-	def analyze():
-		global data, chunks
+	def analyze(self):
 		
 		print "Started input analysis! Suppressing recorded data"
 		#See smoothData for details, but this smooths the signal in time for all freqs
-		data = smoothData(data)
+		recordMsg = smoothData(recordMsg)
 		output = ""
-		while data:
+		while recordMsg:
 				
-			currentChunk = data.pop(0)
-			if sum(currentChunk[freqIndic[0]-1:freqIndic[0]+2]) > 15.0:
+			currentChunk = recordMsg.pop(0)
+			if sum(currentChunk[freqIndic[0]-1:freqIndic[0]+2]) > botBound:
 				output += "0"
 				# So that you do not duplicate the same bit, delete the chunks
 				# that are within the same "0" signal! This works because
 				# the signal is reasonably smooth (!!!)
 				while sum(currentChunk[freqIndic[0]-1:freqIndic[0]+2]) > 3.0:
-					currentChunk = data.pop(0)
+					currentChunk = recordMsg.pop(0)
 		
-			elif sum(currentChunk[freqIndic[1]-1:freqIndic[1]+2]) > 15.0:
+			elif sum(currentChunk[freqIndic[1]-1:freqIndic[1]+2]) > botBound:
 				output += "1"
 				# So that you do not duplicate the same bit, delete the chunks
 				# that are within the same "1" signal! This works because
 				# the signal is reasonably smooth (!!!)
 				while sum(currentChunk[freqIndic[1]-1:freqIndic[1]+2]) > 3.0:
-					currentChunk = data.pop(0)
+					currentChunk = recordMsg.pop(0)
 		print output
 		convertBinaryToAscii(output)
 
@@ -139,9 +204,6 @@ class Receiver:
 
 	#Print out the ascii value of retrieved bits
 	def convertBinaryToAscii(binary):
-		#Only to clean it before going back to normal operation
-		global chunks
-
 		print "Converting binary to ASCII" 
 		#Split into bytes
 		splitList = []
@@ -164,7 +226,7 @@ class Receiver:
 
 		print msg
 		#Clean chunks before going back!
-		chunks[:] = [] 
+		self.chunks[:] = [] 
 
 
 #For noise cancellation I had three attempts, each building on the former. Leave them in
@@ -284,69 +346,5 @@ def updateStatsGraph():
 	statsPlot2k.autoscale_view(True, True, True)
 	statsPlot5k.relim()
 	statsPlot5k.autoscale_view(True, True, True)
-
-#Get the indices for all the frequencies we are using (within freq returned by fft)
-def getIndicators(fftFreq):
-	global freqIndic, freqs, startFreq, endFreq
-	
-	resolution = fftFreq[1]-fftFreq[0]	
-
-	#frequencies that carry information
-	for i in range(len(freqs)):
-		for j in range(len(fftFreq)):
-			if np.abs(freqs[i] - fftFreq[j]) < resolution:
-				freqIndic.append(j)
-				break
-	
-	#start freqIndic is one to last
-	for j in range(len(fftFreq)):
-			if np.abs(startFreq - fftFreq[j]) < resolution:
-				freqIndic.append(j)
-				break
-
-	#end freIndic is last
-	for j in range(len(fftFreq)):
-			if np.abs(endFreq - fftFreq[j]) < resolution:
-				freqIndic.append(j)
-				break
-
-def fourier():
-	global chunks, bufferSize, w, li, fig, statsPlot
-	# Lousy code for fast implementation
-	first = 0
-	count = 0
-	while True:
-		if len(chunks)>0:
-			data = chunks.pop(0)
-			data = np.fromstring(data, dtype=np.int16)
-			#data = scipy.array(struct.unpack("%dB"%(bufferSize*2),data))
-
-			fft = np.fft.fft(data)
-			fftr = 10*np.log10(abs(fft.real))[:len(data)/2]
-			ffti = 10*np.log10(abs(fft.imag))[:len(data)/2]
-			fftb = 10*np.log10(np.sqrt(fft.imag**2 + fft.real**2))[:len(data)/2]
-			cancelNoiseSmoothLocalAvg(fftb)
-			#For plotting statistics about significant frequencies
-			#getStats(fftb)
-			#updateStatsGraph()
-			if first == 0:
-				#Strong assumption: The frequency-brackets DO NOT CHANGE
-				# true for constant chunks
-				freq = np.fft.fftfreq(len(data),1.0/sampleRate)
-				freq = freq[0:len(freq)/2]
-				getIndicators(freq)
-				for i in range(len(freqIndic)):	
-					print freq[freqIndic[i]]
-	
-				li.set_xdata(freq)
-				li.set_ydata(fftb)
-				ax.relim()
-				ax.autoscale_view(True, True, True)	
-				first = 1
-			li.set_ydata(fftb)
-			recordData(fftb)
-			#fig.canvas.draw()
-		if len(chunks)>20:
-			print "This is slow",len(chunks)
 
 
