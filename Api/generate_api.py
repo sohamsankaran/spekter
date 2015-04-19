@@ -16,7 +16,7 @@ class Transmitter:
 	funcGen = FunctionGenerator()	
 	proc = 0
 
-	def __init__(self, filename, freqs, amplitude, startFreq, endFreq, endsTime, framerate, time, channels, bits, simultaneous):
+	def __init__(self, filename = "y", freqs = [2000, 5200], amplitude = 0.5, startFreq = 1260, endFreq = 1260, endsTime = 0.1, framerate = 44200, timei = 0.1, channels = 2, bits = 16, simultaneous = 1):
 		self.filename = filename
 		self.freqs = freqs
 		self.rate = framerate
@@ -75,7 +75,7 @@ class Transmitter:
 	def sendSingleSignal(freq = self.freqs[0], time = self.time, filename = self.filename):
 		freq = freq/2
 		#generate signal
-		channels = ((sine_wave(freq, rate, amplitude),) for i in range(1))
+		channels = ((funcGen.sine_wave(freq, rate, amplitude),) for i in range(1))
 		#length of signal
 		samples = compute_samples(channels, rate * time)
 		#write and play
@@ -114,7 +114,7 @@ class Transmitter:
 						binaryList.pop(p-1)
 					p -= 1
 				#Notice: false -> 0, 2, 4 etc. true -> 1, 3, 5 etc. (false - 0, true - 1)
-				channels = ((sine_wave(freqs[(2*i)+int(subBinaryList[i])], rate, amplitude),) for i in range(len(subBinaryList)))
+				channels = ((funcGen.sine_wave(freqs[(2*i)+int(subBinaryList[i])], rate, amplitude),) for i in range(len(subBinaryList)))
 				samples = compute_samples(channels, rate * time)
 				write_wavefile(filename, samples, rate * time, channels, bits / 8, rate, n=n)
 				
