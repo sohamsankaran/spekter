@@ -1,4 +1,4 @@
-import receive_api.py
+import receive_api
 
 def main():
 	parser = argparse.ArgumentParser()
