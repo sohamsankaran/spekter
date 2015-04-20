@@ -53,7 +53,7 @@ class Transmitter:
 	funcGen = FunctionGenerator()	
 	proc = 0
 
-	def __init__(self, filename = "y", freqs = [2000, 5200], amplitude = 0.5, startFreq = 1260, endFreq = 1260, endsTime = 0.1, framerate = 44200, duration = 0.1, sleepTime = 0.1, channels = 2, bits = 16, simultaneous = 1):
+	def __init__(self, filename = "y", freqs = [2000, 5000], amplitude = 0.5, startFreq = 1260, endFreq = 1260, endsTime = 0.1, framerate = 44100, duration = 0.1, sleepTime = 0.1, channels = 2, bits = 16, simultaneous = 1):
 		self.filename = filename
 		self.freqs = freqs
 		self.rate = framerate
@@ -125,7 +125,13 @@ class Transmitter:
 		samples = self.compute_samples(channels, self.rate * duration)
 		#write and play
 		self.write_wavefile(filename, samples, self.rate * duration, self.channels, self.bits / 8, self.rate)
-		self.proc = Popen(["aplay", filename + "0"])
+		if 'proc' in locals():
+			proc.wait()
+			time.sleep(sleepTime)	
+		#This is just to make sure we don't cut the last signal off. Probably preemptory
+		time.sleep(0.05)
+		proc = Popen(["aplay", filename + "0"])
+		time.sleep(0.05)
 
 	def sendBits(self, binary, simultaneous = None, sleepTime = None, freqs = None, duration = None, filename = None):
 		
@@ -141,6 +147,7 @@ class Transmitter:
 			filename = self.filename
 
 		#which file to write to / from which file to read
+		freqs = [freq / 2 for freq in freqs]
 		n = 0
 		print "sending", binary
 		while binary:
