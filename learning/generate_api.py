@@ -59,7 +59,7 @@ class Transmitter:
 	funcGen = FunctionGenerator()	
 	proc = 0
 
-	def __init__(self, filename = "y", freqs = [2400, 2700, 3100, 3300, 3600, 3900], amplitude = 0.5, startFreq = 2100, endsTime = 0.1, EOWFreq = 1830, framerate = 44100, duration = 0.1, sleepTime = 0.1, bits = 16):
+	def __init__(self, filename = "y", freqs = [2300, 3300, 4000, 4400, 4800, 5400, 9000 ,11300], amplitude = 0.5, startFreq = 2100, endsTime = 0.1, EOWFreq = 1830, framerate = 44100, duration = 0.1, sleepTime = 0.1, bits = 16):
 		self.filename = filename
 		self.freqs = freqs
 		self.rate = framerate
@@ -140,7 +140,7 @@ class Transmitter:
 
 	def sendAllKnownSignals(self, duration = None):
 		if duration == None:
-			duration = self.duration
+			duration = self.duration*4
 
 		#which file to write to / from which file to read
 		fqs = self.freqs[:]
@@ -171,53 +171,46 @@ class Transmitter:
 		if not filename:
 			filename = self.filename
 
-		#which file to write to / from which file to read
-		freqs = [freq / 2 for freq in freqs]
 		n = 0
 		print "sending", binary
 		while binary:
-			if (len(binary) < 4*simultaneous):
-				p = len(binary)/4+1
-			else:
-				p = simultaneous
-			
 			binaryList = []
-			for i in range(p):
-				binaryList.insert(len(binaryList), binary[:4])
-				binary = binary[4:]
+			for i in range(len(self.freqs)/2):
+				binaryList.append(binary[:8])
+				binary = binary[8:]
+
+				if binary == []:
+					break	
 
 			#SFilter any null characters
 			binaryList = filter(None, binaryList)
 
-			while binaryList:
-				#we keep the first bits within each word
+			for i in range(8):
+				
 				subBinaryList = []
-				p = len(binaryList)			
-				while p:
-					#get the next bit
-					subBinaryList.insert(0,binaryList[p-1][0])
-					#delete it
-					binaryList[p-1] = binaryList[p-1][1:]
-					#delete empty elements in the list
-					if not binaryList[p-1]:
-						binaryList.pop(p-1)
-					p -= 1
+				for j in range(len(binaryList)):
+					subBinaryList.append(binaryList[j][0])
+					binaryList[j] = binaryList[j][1:]
+
 				#Notice: false -> 0, 2, 4 etc. true -> 1, 3, 5 etc. (false - 0, true - 1)
 				channels = ((self.funcGen.sine_wave(freqs[(2*i)+int(subBinaryList[i])], self.rate, self.amplitude),) for i in range(len(subBinaryList)))
 				samples = self.compute_samples(channels, self.rate * duration)
-				self.write_wavefile(filename, samples, self.rate * duration, self.channels, self.bits / 8, self.rate, n=n)
+				self.write_wavefile(filename, samples, self.rate * duration, len(subBinaryList), self.bits / 8, self.rate, n=n)
 				
 				if self.proc != 0:
 					self.proc.wait()
 					self.proc = 0
-					time.sleep(sleepTime)
+					time.sleep(self.sleepTime)
 				
 				self.proc = Popen(["aplay", filename + str(n)])
 				n = (n + 1) % 2
+		
+			#End of words!
+			self.sendSingleSignal(freq = self.EOWFreq, duration = 1.2*self.duration)
 		
 	def sendMessage(self):
 		binary = self.getMessageFromInput()
 		self.sendSingleSignal(freq = self.startFreq, duration = self.endsTime, filename = "start")
 		self.sendBits(binary = binary)
-		self.sendSingleSignal(freq = self.endFreq, duration = self.endsTime, filename = "stop")
+		self.sendSingleSignal(freq = self.startFreq, duration = self.endsTime, filename = "stop")
 

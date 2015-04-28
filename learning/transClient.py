@@ -5,7 +5,7 @@ import pdb
 
 frequencyError = 150
 rx = Receiver(printDebug = 1)
-tx = Transmitter(duration = 0.3, amplitude = 1)
+tx = Transmitter(duration = 0.3, endsTime = 0.3, amplitude = 1)
 
 def synchronize():
 	#we will repeat this until we die. Basically to synchro
@@ -27,7 +27,7 @@ def synchronize():
 		print "SYNC"
 		tx.sendSingleSignal(freq = tx.EOWFreq)
 		print "ALL SIGNALS"
-		tx.sendAllKnownSignals(duration = 0.5)
+		tx.sendAllKnownSignals()
 		print "SYNC"
 		tx.sendSingleSignal(freq = tx.EOWFreq)
 		
@@ -59,3 +59,4 @@ def synchronize():
 #tx.sendSingleSignal(freq = tx.EOWFreq, duration = 1)
 
 synchronize()
+tx.sendMessage()

@@ -47,7 +47,7 @@ class NoiseFilter:
 		#take 3. Use local avg but smoothed. This is what we use at the end
 	def cancelNoiseSmoothLocalAvg(self, data):
 		#How many elements on each side we will consider for each point
-		margin = 10
+		margin = 7
 		#We can't always consider +/- margin (edge cases)! This is how many we 
 		#actually consider
 		average = [0]*len(data)
@@ -154,7 +154,7 @@ class Receiver:
 		self.recordingThread = threading.Thread(target=self.startMicrophone)
 		self.recordingThread.start()
 
-	def waitForSignal(self, frequency, errorAllowable = 0, purge = 1):
+	def waitForSignal(self, frequency, errorAllowable = 0, purge = 1, timeOut = None):
 
 		#purge buffer
 		if purge == 1:
@@ -182,10 +182,20 @@ class Receiver:
 			print "The indicator is", indicator, "the frequency there is", self.fftFreqs[indicator], "The real frequency is ", frequency
 	
 		#Wait for the signal...
+		if timeOut == None:
+			timeOut = self.timeOut
+
 		tries = 0
 		consequentSignals = 0
 		errorInRes = math.trunc(errorAllowable / freqResolution)
-		while tries < self.timeOut:
+
+		if purge == 0:
+			cpChunks = []
+
+		while tries < timeOut:
+
+			if purge == 0 and len(self.chunks) > 0:
+				cpChunks.append(self.chunks[0])
 			#If we have chunks to analyze
 			if len(self.chunks) > 0:
 				fftb = self.fourier()
@@ -219,14 +229,20 @@ class Receiver:
 			if consequentSignals > self.recordThsld:
 				if self.printDebug == 1:
 					print "Got the frequency signal!", frequency
+
+				if purge == 0:
+					self.chunks = cpChunks + self.chunks
 				return 1
 
 		#If we time out, just return false
 		if self.printDebug == 1:
 			print "Timed out waiting for signal!", frequency
+
+			if purge == 0:
+				self.chunks = cpChunks + self.chunks
 		return 0
 	
-	def snoop(self, timeOut = None, purge = 1):
+	def snoop(self, timeOut = None, signal = None, purge = 1):
 		
 		if purge == 1:
 			self.chunks = []
@@ -257,7 +273,8 @@ class Receiver:
 				#Check if we got meaningful signal
 				for j in range(len(fftb)):
 					if fftb[j] > self.botBound:
-						consequentSignals[j] += 1
+						if signal == None:
+							consequentSignals[j] += 1
 						if self.printDebug == 1:
 							print "Got a strong ping: ", self.fftFreqs[j], "Of strength ", fftb[j] 
 						if consequentSignals[j] > self.recordThsld:
@@ -275,7 +292,7 @@ class Receiver:
 		return (0, 0)
 
 	#Need estimates of synchro. Sender can always provide
-	def getFreqs(self, synchroFreq, startFreq, freqs, estimatedError = 100, SIC = 1):
+	def getFreqs(self, synchroFreq, startFreq, freqs, estimatedError = 200):
 		freqResolution = self.fftFreqs[1] - self.fftFreqs[0]
 		estimatedErrorFrame = math.trunc(estimatedError/freqResolution)
 		indicatorSync = []
@@ -338,16 +355,16 @@ class Receiver:
 		for j in range(len(self.recordedMsg)):
 			curr = self.recordedMsg[j]
 			for i in range(botSync, topSync):
-				if curr[i] > self.botBound - 2:
+				if curr[i] > self.botBound-4:
 					synchroFreqs[i-botSync] += 1
 
 			for i in range(botStart, topStart):
-				if curr[i] > self.botBound - 2:
+				if curr[i] > self.botBound-4:
 					startFreqs[i - botStart] += 1
 
 			for k in range(len(freqFreqs)):
 				for i in range(botFreqs[k], topFreqs[k]):
-					if curr[i] > self.botBound - 2:
+					if curr[i] > self.botBound-4:
 						freqFreqs[k][i - botFreqs[k]] += 1
 		#Get the synchro signal from the histogram. Assume it is the strongest
 		topValue = 0
@@ -360,7 +377,7 @@ class Receiver:
 		self.EOWFreq = topIndic
 		
 		if self.printDebug == 1:
-			print "Found synchro frequency. It is about: ", self.fftFreqs[topIndic]
+			print "Found synchro frequency. It is about: ", self.fftFreqs[topIndic], "out of", synchroFreqs
 
 		topValue = 0
 		topIndic = 0
@@ -372,7 +389,7 @@ class Receiver:
 		self.startFreq = topIndic
 
 		if self.printDebug == 1:
-			print "Found start frequency. It is about: ", self.fftFreqs[topIndic]
+			print "Found start frequency. It is about: ", self.fftFreqs[topIndic], "out of", startFreqs
 
 		for i in range(len(freqFreqs)):
 			topValue = 0
@@ -385,7 +402,7 @@ class Receiver:
 			self.freqs.append(topIndic)
 
 			if self.printDebug == 1:
-				print "Found important frequency. It is about ", self.fftFreqs[topIndic]
+				print "Found important frequency. It is about ", self.fftFreqs[topIndic], "out of", freqFreqs[i]
 		
 
 ##Delete multiples of EOWFreq from input. SIC. Note: can delete up to 2 frames per iteration
@@ -439,6 +456,7 @@ class Receiver:
 #								self.recordedMsg[mid][i] = 0
 #					multi += multi
 
+		self.recordedMsg = []
 		return len(self.freqs) + 2
 
 	def purgeFreqs(self):
@@ -538,13 +556,21 @@ class Receiver:
 	def recordInput(self):
 		self.chunks = []
 
-	def stopRecordingInput(self):	
+	def stopRecordingInput(self):
+		self.recordedMsg = []
 		for j in range(len(self.chunks)):
 			self.recordedMsg.append(self.fourier())
 
 	#Retrieves bits from the recorded chunks of sound. Then calls convertBinaryToAscii
 	#To retrieve the actual data
-	def analyze(self):
+	def analyze(self, possibleError = 4):
+		if self.printDebug == 1:
+			print "We have ", len(self.recordedMsg), " chunks to analyze!"
+		for j in range(len(self.recordedMsg)):
+			for i in range(len(self.recordedMsg[j])):
+				if self.recordedMsg[j][i] > self.botBound:
+					print self.recordedMsg[j][i], self.fftFreqs[i]
+
 		if self.printDebug == 1:	
 			print "Started input analysis! Suppressing recorded data"
 		#Show a plot of smooth vs. non smooth data. For first carrier, first 200 pts
@@ -573,58 +599,59 @@ class Receiver:
 				range(len(smooth)))
 
 			plt.savefig("SmoothAndNotSmoothAnalysis.jpg")	
-
 		output = []
-
-		charsPerSig = len(self.freqs) / 2 
-
+		for i in range(len(self.freqs)/2):
+			output.append([""])
 		#Note that this also purges the record buffer
 		while self.recordedMsg:
 				
 			currentChunk = self.recordedMsg.pop(0)
-		
+			
+			#End of word!
 			if currentChunk[self.EOWFreq] > self.botBound:
-				#Check that we have that many bits!
-				bitsPerSig = math.ceil(charsPerSig)*8
-				if len(output[-1]) != bitsPerSig:
-					if self.printDebug == 1:
+				for i in range(1, len(self.freqs)/2+1):
+					if len(output[-i]) != 8:
 						print "Corrupted bit!"
-					
-					#Fill missing bits with "0"
-					while len(output[-1]) < bitsPerSig:
-						output[-1] = output[-1] + "0"
+					#If too few bits, fill them in
+					while len(output[-i][0]) < 8:
+						output[-i][0] = output[-i][0] + "0"
 
-					#Delete excessive bits if needed
-					while len(output[-1]) > bitsPerSig:
-						output[-1] = output[-1][:-1]
+					#If too many bits, cut them out
+					while len(output[-i][0]) > 8:
+						output[-i][0] = output[-i][0][:-1]
 
-				#Split into 8-bit chunks if greater
-				if bitsPerSig > 8:
-					beforeSplit = output[-1]
-					output[-1] = []
-					while beforeSplit:
-						output.append(beforeSplit[:8])
-						beforeSplit = beforeSplit[8:]			
-
-				#Start decoding next bit
-				output.append([])
+				for i in range(len(self.freqs)/2):
+					output.append([""])
+			
+				while currentChunk[self.EOWFreq] > self.botBound:
+					currentChunk = self.recordedMsg.pop(0)
+				
+				if self.printDebug == 1:
+					print "Got end of word!"	
+	
+				continue
 				
 			#Getting rid of multiplicates. Remember one freq. All synchronized in that
 			#sense
-			msgFreq = 0		
-			for i in range(len(self.freqs)):
-				if currentChunk[self.freqs[i]] > self.botBound:
-					if i%2:
-						output[-1] += "0"
-					else:
-						output[-1] += "1"
-					msgFreq = i	
+			
+			else: 
+				msg = 0
+				for i in range(len(self.freqs)):
+					if sum(currentChunk[self.freqs[i] - possibleError: self.freqs[i] + possibleError]) > self.botBound:
+						if i%2 == 0:
+							print i, i/2-len(self.freqs)/2
+							output[i/2-len(self.freqs)/2][0] = output[i/2 - len(self.freqs)/2][0] + "0"
+						else:
+							print i, (i-1)/2 - len(self.freqs)/2
+							output[(i-1)/2 - len(self.freqs)/2][0] = output[(i-1)/2-len(self.freqs)/2][0] + "1"
+						msg = i
+					
 				# So that you do not duplicate the same bit, delete the chunks
 				# that are within the same "symbol" signal! This works because
 				# the signal is reasonably smooth (!!!)
 
-			while currentChunk[self.freqs[msgFreq]] > self.botBound:
-				currentChunk = self.recordedMsg.pop(0)
+				while sum(currentChunk[self.freqs[msg] - possibleError : self.freqs[msg] + possibleError]) > self.botBound:
+					currentChunk = self.recordedMsg.pop(0)
 		
 		print output
 		self.convertBinaryToAscii(output)
@@ -632,53 +659,68 @@ class Receiver:
 	#Smooth data in time for every frequency. Consider current chunk, one in past and one in future
 	# and take average of these as your value for every frequency. This prevents the signal 
 	# corresponding to "1" or "0" to have a "gorge" within it that would split it into two
-	# "1" or "0" signals! 
-
-	#smoothFactor tells us how to average out / how much to average out -- how many time frames
-	# to take
-	def smoothData(self, data, smoothFactor = 3):
-	
+	# "1" or "0" signals!
+	def smoothData(self, data):
 		smoothedGlobal = []
-		for i in range(len(data)):
+		for i in range(1,len(data)-1):
 			smoothedLocal = []
-			
-			framesToSmooth = math.trunc(smoothFactor / 2)
-			
-			botBoundForSmoothing = 0
-			if i > framesToSmooth:
-				botBoundForSmoothing = i - framesToSmooth
-
-			topBoundForSmoothing = len(data)
-			if len(data) > i + framesToSmooth:
-				topBoundForSmoothing = i + framesToSmooth
-			
-
-			#This could fail if data frames are different length. Good they are not.
 			for j in range(len(data[i])):
-				tmp = []
-
-				for k in range(botBoundForSmoothing, topBoundForSmoothing):
-					tmp.append(data[k][j])
-				
-				smoothedLocal.append(sum(tmp)/(topBoundForSmoothing - botBoundForSmoothing + 1))
-
+				past = data[i-1][j]
+				now = data[i][j]
+				future = data[i+1][j]
+				smoothedLocal.append((past + now + future)/3)
 			smoothedGlobal.append(smoothedLocal)
-
-		for i in range(len(smoothedGlobal[0])):
-			if smoothedGlobal[0][i] > 1:
-				print smoothedGlobal[0][i], self.fftFreqs[i]
-	
 		return smoothedGlobal
+
+
+#	#smoothFactor tells us how to average out / how much to average out -- how many time frames
+#	# to take
+#	def smoothData(self, data, smoothFactor = 3):
+#	
+#		smoothedGlobal = []
+#		for i in range(len(data)):
+#			smoothedLocal = []
+#			
+#			framesToSmooth = math.trunc(smoothFactor / 2)
+#			
+#			botBoundForSmoothing = 0
+#			if i > framesToSmooth:
+#				botBoundForSmoothing = i - framesToSmooth
+#
+#			topBoundForSmoothing = len(data)
+#			if len(data) > i + framesToSmooth:
+#				topBoundForSmoothing = i + framesToSmooth
+#			
+#
+#			#This could fail if data frames are different length. Good they are not.
+#			for j in range(len(data[i])):
+#				tmp = []
+#
+#				for k in range(botBoundForSmoothing, topBoundForSmoothing):
+#					tmp.append(data[k][j])
+#				
+#				smoothedLocal.append(sum(tmp)/(topBoundForSmoothing - botBoundForSmoothing + 1))
+#
+#			smoothedGlobal.append(smoothedLocal)
+#
+#		for i in range(len(smoothedGlobal[0])):
+#			if smoothedGlobal[0][i] > 1:
+#				print smoothedGlobal[0][i], self.fftFreqs[i]
+#	
+#		return smoothedGlobal
 
 	#Print out the ascii value of retrieved bits
 	def convertBinaryToAscii(self, binary):
 		if self.printDebug == 1:
 			print "Converting binary to ASCII" 
 		
+		#Filter out empty strings... basically 4 last elems
+		binary = binary[:len(binary)-4]		
+
 		#Convert bytes into ints
 		integerVals = []
 		for i in range(len(binary)):
-			integerVals.append(int(binary[i], 2))
+			integerVals.append(int(binary[i][0], 2))
 
 		if self.printDebug == 1:
 			print integerVals

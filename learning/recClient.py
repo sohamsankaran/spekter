@@ -2,7 +2,7 @@ from receive_api import *
 from generate_api import *
 import time
 
-frequencyError = 100
+frequencyError = 50
 rx = Receiver(printDebug = 1)
 tx = Transmitter(duration = 0.3, amplitude = 1)
 
@@ -41,9 +41,10 @@ while(True):
 	while snoopResponse[0] == 0:
 		snoopResponse = rx.snoop(timeOut = 10000)
 	
-#	if np.abs(tx.startFreq - snoopResponse[1]) < frequencyError:
-#		rx.waitForMessage()
-	if np.abs(tx.EOWFreq - snoopResponse[1]) < frequencyError:
+	if np.abs(tx.startFreq - snoopResponse[1]) < frequencyError:
+		rx.recordInput()
+		rx.waitForSignal(frequency = tx.startFreq, timeOut = 10000000, errorAllowable = 0, purge = 0)
+		rx.stopRecordingInput()
+		rx.analyze()
+	elif np.abs(tx.EOWFreq - snoopResponse[1]) < frequencyError:
 		synchronize()
-
-
